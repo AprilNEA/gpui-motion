@@ -1,0 +1,14 @@
+[package]
+name = "gpui-motion"
+version = "0.0.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/AprilNEA/gpui-motion"
+authors = ["AprilNEA <dev@aprilnea.me>"]
+description = "Animation and motion primitives for GPUI applications"
+readme = "README.md"
+keywords = ["gpui", "animation", "motion"]
+categories = ["gui"]
+
+[lib]
+name = "gpui_motion"
