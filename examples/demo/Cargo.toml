@@ -1,0 +1,10 @@
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-motion = { path = "../.." }
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "x11", "wayland"] }

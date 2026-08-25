@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+    build-essential clang cmake curl git libasound2-dev libegl1-mesa-dev \
+    libfontconfig1-dev libssl-dev libvulkan-dev libwayland-dev libx11-xcb-dev \
+    libxcb1-dev libxcb-composite0-dev libxcb-ewmh-dev libxcb-xfixes0-dev \
+    libxcb-xinput-dev libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev \
+    mold pkg-config xvfb
+
+if ! command -v cargo >/dev/null 2>&1; then
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+fi
+
+"${CARGO_HOME:-$HOME/.cargo}/bin/rustup" component add rustfmt clippy
