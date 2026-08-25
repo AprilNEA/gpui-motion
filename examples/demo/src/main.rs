@@ -4,7 +4,7 @@ use gpui::{
 };
 use gpui_motion::{
     DragTracker, Inertia, KeyframesTiming, MotionExt, MotionValue, PresenceMode, RepeatKind,
-    Spring, Transition, Tween, easing, presence, presence_group,
+    Spring, Transition, Tween, Variants, When, easing, presence, presence_group,
 };
 use gpui_platform::application;
 
@@ -21,6 +21,7 @@ struct MotionDemo {
     next_item: u64,
     sync_items: Vec<u64>,
     wait_first: bool,
+    menu_open: bool,
 }
 
 impl MotionDemo {
@@ -59,6 +60,39 @@ impl Render for MotionDemo {
         } else {
             (px(24.0), rgba(0x4cc9f0ff))
         };
+
+        let menu_variant = if self.menu_open { "open" } else { "closed" };
+        let mut menu_items = div().flex().flex_col().gap_1();
+        for (index, (label, color)) in [
+            ("Dashboard", 0x7c5cffff),
+            ("Projects", 0x4cc9f0ff),
+            ("Activity", 0x24b47eff),
+            ("Settings", 0xffb020ff),
+            ("Sign out", 0xff5c8aff),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            menu_items = menu_items.child(
+                div()
+                    .relative()
+                    .px_3()
+                    .py_1()
+                    .rounded_md()
+                    .child(label)
+                    .with_variants(
+                        ElementId::named_usize("variant-menu-item", index),
+                        Variants::new([
+                            ("closed", (px(-24.0), rgba(color & 0xffffff00))),
+                            ("open", (px(0.0), rgba(color))),
+                        ]),
+                        None,
+                        Spring::stiff(),
+                        |item, (left, background)| item.left(left).bg(background),
+                    )
+                    .initial((px(-24.0), rgba(color & 0xffffff00))),
+            );
+        }
 
         let mut sync_group = presence_group::<(gpui::Pixels, Rgba)>("sync-list")
             .mode(PresenceMode::Sync)
@@ -322,6 +356,38 @@ impl Render for MotionDemo {
                 ),
             )
             .child(
+                section("Variants · BeforeChildren + 0.05s stagger")
+                    .child(button(
+                        "variant-menu-toggle",
+                        "Toggle menu",
+                        cx.listener(|this, _, _, cx| {
+                            this.menu_open = !this.menu_open;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        div()
+                            .relative()
+                            .w(px(260.0))
+                            .p_3()
+                            .rounded_lg()
+                            .child(menu_items)
+                            .with_variants(
+                                "variant-menu",
+                                Variants::new([
+                                    ("closed", (px(-36.0), rgba(0x252a3600))),
+                                    ("open", (px(0.0), rgba(0x252a36ff))),
+                                ]),
+                                Some(menu_variant),
+                                Spring::stiff(),
+                                |panel, (left, background)| panel.left(left).bg(background),
+                            )
+                            .initial((px(-36.0), rgba(0x252a3600)))
+                            .when(When::BeforeChildren)
+                            .stagger_children(0.05),
+                    ),
+            )
+            .child(
                 div()
                     .flex()
                     .gap_3()
@@ -438,7 +504,7 @@ fn button(
 
 fn main() {
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1060.0), px(980.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1060.0), px(1180.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -458,6 +524,7 @@ fn main() {
                     next_item: 4,
                     sync_items: vec![1, 2, 3],
                     wait_first: true,
+                    menu_open: false,
                 })
             },
         )

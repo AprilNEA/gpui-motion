@@ -1,4 +1,8 @@
-use std::{cell::Cell, rc::Rc, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    time::Instant,
+};
 
 use gpui::{
     AnyElement, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox,
@@ -8,8 +12,10 @@ use gpui::{
 
 use crate::{
     Animatable, ChannelTransitions, Inertia, KeyframesTiming, MAX_CHANNELS, MAX_KEYFRAMES,
-    MotionState, Spring, Transition, Tween,
+    MotionState, Spring, Transition, Tween, Variants, When,
 };
+
+use crate::scope::{ScopeFrame, SettledRegistry, current_scope, pop_scope, push_scope};
 
 type SettleCallback = Box<dyn Fn(&mut Window, &mut App) + 'static>;
 
@@ -110,6 +116,52 @@ pub trait MotionExt: Element + Sized {
             while_hover: None,
             while_press: None,
             on_settle: None,
+            variants: None,
+            active_variant: None,
+            stagger_children: None,
+            delay_children: None,
+            when: None,
+        }
+    }
+
+    fn with_variants<V: Animatable>(
+        self,
+        id: impl Into<ElementId>,
+        variants: Variants<V>,
+        active: Option<&str>,
+        transition: impl IntoTransitions<V>,
+        f: impl Fn(Self, V) -> Self + 'static,
+    ) -> MotionElement<Self, V> {
+        assert!(V::CHANNELS <= MAX_CHANNELS);
+        let first = variants
+            .first()
+            .expect("with_variants requires at least one variant");
+        let variants = variants.into_entries();
+        let transitions = transition.into_transitions();
+        assert_eq!(
+            transitions
+                .iter()
+                .map(|(channels, _)| channels)
+                .sum::<usize>(),
+            V::CHANNELS,
+            "segmented transition lengths must equal the animated value's channel count"
+        );
+        MotionElement {
+            id: id.into(),
+            element: Some(self),
+            targets: vec![first],
+            keyframes: false,
+            transitions,
+            animator: Box::new(f),
+            initial: None,
+            while_hover: None,
+            while_press: None,
+            on_settle: None,
+            variants: Some(variants),
+            active_variant: active.map(str::to_owned),
+            stagger_children: None,
+            delay_children: None,
+            when: None,
         }
     }
 }
@@ -127,6 +179,11 @@ pub struct MotionElement<E, V> {
     while_hover: Option<V>,
     while_press: Option<V>,
     on_settle: Option<SettleCallback>,
+    variants: Option<Vec<(&'static str, V)>>,
+    active_variant: Option<String>,
+    stagger_children: Option<f32>,
+    delay_children: Option<f32>,
+    when: Option<When>,
 }
 
 impl<E, V> MotionElement<E, V> {
@@ -149,6 +206,28 @@ impl<E, V> MotionElement<E, V> {
         self.on_settle = Some(Box::new(callback));
         self
     }
+
+    pub fn stagger_children(mut self, seconds: f32) -> Self {
+        self.stagger_children = Some(seconds);
+        self
+    }
+
+    pub fn delay_children(mut self, seconds: f32) -> Self {
+        self.delay_children = Some(seconds);
+        self
+    }
+
+    pub fn when(mut self, when: When) -> Self {
+        self.when = Some(when);
+        self
+    }
+
+    fn is_scope_root(&self) -> bool {
+        self.active_variant.is_some()
+            || self.stagger_children.is_some()
+            || self.delay_children.is_some()
+            || self.when.is_some()
+    }
 }
 
 impl<E: Element, V: Animatable> IntoElement for MotionElement<E, V> {
@@ -169,11 +248,16 @@ struct MotionElementState {
     motion: MotionState,
     gestures: Rc<Cell<GestureState>>,
     settle_notified: bool,
+    variant_name: Option<String>,
+    variant_target: Option<[f32; MAX_CHANNELS]>,
+    transition_delay: f32,
+    scope_settled: Rc<RefCell<SettledRegistry>>,
 }
 
 pub struct MotionLayoutState {
     element: AnyElement,
     gestures: Rc<Cell<GestureState>>,
+    scope: Option<ScopeFrame>,
 }
 
 impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
@@ -195,6 +279,25 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        let outer_scope = current_scope(cx);
+        let descendant_index = self
+            .variants
+            .as_ref()
+            .and(outer_scope.as_ref())
+            .map(ScopeFrame::claim);
+        let inherited_active = outer_scope.as_ref().and_then(|scope| scope.active.clone());
+        let resolved_active = self
+            .active_variant
+            .clone()
+            .or_else(|| inherited_active.clone());
+        let scope_active = self.active_variant.clone().or(inherited_active);
+        let resolved_variant = resolved_active.as_deref().and_then(|name| {
+            self.variants
+                .as_ref()?
+                .iter()
+                .find_map(|(entry_name, value)| (*entry_name == name).then(|| value.clone()))
+        });
+
         let frames = self
             .targets
             .iter()
@@ -215,13 +318,30 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
                         .as_ref()
                         .unwrap_or(&self.targets[self.targets.len() - 1])
                         .write(&mut initial[..V::CHANNELS]);
+                    let initial_target = if self.variants.is_some() {
+                        &initial[..V::CHANNELS]
+                    } else {
+                        declared_target
+                    };
                     MotionElementState {
-                        motion: MotionState::new(&initial[..V::CHANNELS], declared_target),
+                        motion: MotionState::new(&initial[..V::CHANNELS], initial_target),
                         gestures: Rc::default(),
                         settle_notified: false,
+                        variant_name: None,
+                        variant_target: None,
+                        transition_delay: 0.0,
+                        scope_settled: Rc::default(),
                     }
                 });
 
+                let scope_root = self.is_scope_root();
+                let when = self.when.unwrap_or_default();
+                let root_variant_ready = !scope_root
+                    || state
+                        .scope_settled
+                        .borrow_mut()
+                        .begin_frame(scope_active.as_deref(), when);
+                let reduce_motion = cx.reduce_motion();
                 let gestures = state.gestures.get();
                 let gesture_target = if gestures.pressed {
                     self.while_press.as_ref().or(self.while_hover.as_ref())
@@ -230,35 +350,88 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
                 } else {
                     None
                 };
-                let retargeted = if let Some(target) = gesture_target {
+                let mut pending_retarget = false;
+                let mut retargeted = false;
+                if let Some(target) = gesture_target {
                     let mut channels = [0.0; MAX_CHANNELS];
                     target.write(&mut channels[..V::CHANNELS]);
-                    state.motion.retarget_if_needed(&channels[..V::CHANNELS])
+                    retargeted = state.motion.retarget_if_needed(&channels[..V::CHANNELS]);
+                    if retargeted {
+                        state.transition_delay = 0.0;
+                    }
+                } else if self.variants.is_some() {
+                    if let (Some(name), Some(target)) =
+                        (resolved_active.as_deref(), resolved_variant.as_ref())
+                    {
+                        let mut channels = [0.0; MAX_CHANNELS];
+                        target.write(&mut channels[..V::CHANNELS]);
+                        let variant_changed = state.variant_name.as_deref() != Some(name)
+                            || state.variant_target.as_ref().is_none_or(|previous| {
+                                previous[..V::CHANNELS] != channels[..V::CHANNELS]
+                            });
+                        let outer_ready = outer_scope.as_ref().is_none_or(|scope| {
+                            scope.when != When::BeforeChildren || scope.root_settled
+                        });
+                        let own_ready = when != When::AfterChildren || root_variant_ready;
+                        if variant_changed && !reduce_motion && (!outer_ready || !own_ready) {
+                            pending_retarget = true;
+                        } else {
+                            retargeted = state.motion.retarget_if_needed(&channels[..V::CHANNELS]);
+                            if retargeted {
+                                state.transition_delay = if variant_changed {
+                                    descendant_index
+                                        .zip(outer_scope.as_ref())
+                                        .map_or(0.0, |(index, scope)| scope.delay(index))
+                                } else {
+                                    0.0
+                                };
+                            }
+                            state.variant_name = Some(name.to_owned());
+                            state.variant_target = Some(channels);
+                        }
+                    }
                 } else if self.keyframes {
                     let frame_refs = frames
                         .iter()
                         .map(|frame| &frame[..V::CHANNELS])
                         .collect::<Vec<_>>();
-                    state.motion.retarget_keyframes_if_needed(&frame_refs)
+                    retargeted = state.motion.retarget_keyframes_if_needed(&frame_refs);
+                    if retargeted {
+                        state.transition_delay = 0.0;
+                    }
                 } else {
-                    state.motion.retarget_if_needed(declared_target)
-                };
+                    retargeted = state.motion.retarget_if_needed(declared_target);
+                    if retargeted {
+                        state.transition_delay = 0.0;
+                    }
+                }
                 if retargeted {
                     state.settle_notified = false;
                 }
 
-                if cx.reduce_motion() {
+                if reduce_motion {
                     state.motion.snap();
                 } else {
-                    let transitions = if self.transitions.len() == 1 {
-                        ChannelTransitions::Uniform(&self.transitions[0].1)
+                    let delayed_transitions = (state.transition_delay != 0.0).then(|| {
+                        self.transitions
+                            .iter()
+                            .map(|(channels, transition)| {
+                                let mut transition = *transition;
+                                transition.delay += state.transition_delay;
+                                (*channels, transition)
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                    let transitions = delayed_transitions.as_deref().unwrap_or(&self.transitions);
+                    let transitions = if transitions.len() == 1 {
+                        ChannelTransitions::Uniform(&transitions[0].1)
                     } else {
-                        ChannelTransitions::Segmented(&self.transitions)
+                        ChannelTransitions::Segmented(transitions)
                     };
                     state.motion.tick(Instant::now(), transitions);
                 }
 
-                if !state.motion.settled() {
+                if !state.motion.settled() || pending_retarget {
                     window.request_animation_frame();
                 } else if !state.settle_notified {
                     if let Some(callback) = &self.on_settle {
@@ -267,13 +440,32 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
                     state.settle_notified = true;
                 }
 
+                if let (Some(scope), Some(index)) = (&outer_scope, descendant_index) {
+                    scope.register(index, state.motion.settled() && !pending_retarget);
+                }
+
+                let scope = scope_root.then(|| ScopeFrame {
+                    active: scope_active.clone(),
+                    stagger_children: self.stagger_children.unwrap_or(0.0),
+                    delay_children: self.delay_children.unwrap_or(0.0),
+                    when,
+                    root_settled: state.motion.settled() && !pending_retarget,
+                    settled: Rc::clone(&state.scope_settled),
+                });
                 let value = V::read(state.motion.current());
                 let element = self.element.take().expect("request_layout is called once");
                 let mut element = (self.animator)(element, value).into_any_element();
+                if let Some(scope) = &scope {
+                    push_scope(cx, scope.clone());
+                }
                 let layout_id = element.request_layout(window, cx);
+                if scope.is_some() {
+                    pop_scope(cx);
+                }
                 let layout_state = MotionLayoutState {
                     element,
                     gestures: Rc::clone(&state.gestures),
+                    scope,
                 };
                 ((layout_id, layout_state), state)
             },
@@ -289,7 +481,13 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
+        if let Some(scope) = &state.scope {
+            push_scope(cx, scope.clone());
+        }
         state.element.prepaint(window, cx);
+        if state.scope.is_some() {
+            pop_scope(cx);
+        }
         (self.while_hover.is_some() || self.while_press.is_some())
             .then(|| window.insert_hitbox(bounds, HitboxBehavior::Normal))
     }
@@ -304,7 +502,13 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(scope) = &state.scope {
+            push_scope(cx, scope.clone());
+        }
         state.element.paint(window, cx);
+        if state.scope.is_some() {
+            pop_scope(cx);
+        }
         let Some(hitbox) = hitbox else {
             return;
         };

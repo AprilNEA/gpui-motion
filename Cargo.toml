@@ -1,5 +1,5 @@
 [workspace]
-members = ["examples/demo"]
+members = ["examples/demo", "examples/flip_demo"]
 
 [package]
 name = "gpui-motion"
