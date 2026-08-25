@@ -1,6 +1,6 @@
 # gpui-motion
 
-Framer Motion-style **state-driven** animation for [gpui](https://www.gpui.rs/) (Zed's Rust UI framework): closed-form springs, tweens, keyframes, inertia, gestures, and velocity-preserving retargeting.
+Framer Motion-style **state-driven** animation for [gpui](https://www.gpui.rs/) (Zed's Rust UI framework): closed-form springs, tweens, keyframes, inertia, gestures, variants with stagger orchestration, FLIP layout animation, and velocity-preserving retargeting.
 
 You declare a *target value* on every frame; the library smoothly drives the currently rendered value toward it. When the target changes mid-flight, the animation **keeps its current velocity and redirects seamlessly** — it never jumps and never restarts from the beginning.
 
@@ -145,6 +145,57 @@ Inertia::new()
 
 Inertia animates from the *current velocity* (exponential decay toward a projected target); out-of-bounds targets hand off to a boundary spring. Pair it with `DragTracker` for drag-release flings.
 
+### Variants + orchestration — `with_variants`, `stagger_children`, `when`
+
+Name your target sets once; parents broadcast the active variant and children inherit it:
+
+```rust
+// Parent: owns the active variant and orchestrates children
+div()
+    .child(items)
+    .with_variants(
+        "menu",
+        Variants::new([
+            ("closed", (px(-36.0), rgba(0x252a3600))),
+            ("open",   (px(0.0),  rgba(0x252a36ff))),
+        ]),
+        Some(if open { "open" } else { "closed" }),   // active variant
+        Spring::stiff(),
+        |panel, (left, bg)| panel.left(left).bg(bg),
+    )
+    .when(When::BeforeChildren)     // children wait until the panel settles
+    .stagger_children(0.05)         // then cascade in tree order
+    .delay_children(0.1)
+
+// Child: `active: None` inherits from the nearest enclosing variant scope
+div().with_variants(
+    ("item", index),
+    Variants::new([
+        ("closed", (px(-24.0), transparent)),
+        ("open",   (px(0.0),  color)),
+    ]),
+    None,                            // inherit "open"/"closed" from the parent
+    Spring::stiff(),
+    |item, (left, bg)| item.left(left).bg(bg),
+)
+```
+
+- `When::Together` (default) — no coordination. `BeforeChildren` — children's variant retarget waits for the parent's own animation to settle. `AfterChildren` — the parent waits for all children.
+- Child stagger index follows tree order; extra delay = `delay_children + index × stagger_children`, applied only to variant-driven retargets.
+- Switching variants mid-flight redirects with preserved velocity, like everything else.
+- `Variants` passed to `with_variants` must be non-empty (the first entry is the fallback when no scope provides an active name).
+
+### FLIP layout animation — `with_flip`
+
+When an element's *layout position* changes (list reorder, sibling removal), wrap it in `with_flip` and it glides to its new position instead of teleporting:
+
+```rust
+div().child(item).with_flip(("item", item.id))
+    .transition(Spring::stiff())   // optional; Spring::stiff() is the default
+```
+
+Each frame the wrapper records the child's layout origin; on a change it folds the inverse delta into a 2-channel spring (consecutive reorders preserve velocity) and offsets painting via gpui's `Window::with_element_offset` — layout itself is untouched, so siblings are unaffected. Translation-only: gpui has no transforms, so size changes are not animated. Deferred-draw subtrees are unsupported inside `with_flip`.
+
 ### `presence` / `presence_group` — enter/exit animation
 
 Single element:
@@ -209,6 +260,11 @@ Store it in your `Entity`; clone it into closures (clones share state).
 | `transition={{ x: {...}, background: {...} }}` (per-property) | tuple of transitions: `(Spring::stiff(), Tween::new(0.25))` |
 | `transition={{ type: "inertia", ... }}` | `Inertia::new().bounds(min, max).modify_target(f)` |
 | `initial={{ ... }}` | `.initial(value)` |
+| `variants` + `animate="name"` | `.with_variants(id, Variants::new([...]), Some(name), t, f)` |
+| children inheriting the parent's variant | `.with_variants(id, variants, None, t, f)` |
+| `staggerChildren` / `delayChildren` | `.stagger_children(s)` / `.delay_children(s)` |
+| `when: "beforeChildren" \| "afterChildren"` | `.when(When::BeforeChildren \| AfterChildren)` |
+| `layout` (FLIP position) | `.with_flip(id)` |
 | `whileHover` / `whileTap` | `.while_hover(value)` / `.while_press(value)` |
 | `onAnimationComplete` | `.on_settle(...)` |
 | `<AnimatePresence>` (single child) | `presence(id, visible, enter, exit, t, render)` |
@@ -235,7 +291,7 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 
 ## Known limitations
 
-- **No CSS-style transforms.** gpui's `div` has no `transform` property. Express translation via `left`/`top` (with absolute positioning) or margins, and scale via `w`/`h`. This is a framework fact, not a bug in this crate.
+- **No CSS-style transforms.** gpui's `div` has no `transform` property. Express translation via `left`/`top` (with absolute positioning) or margins, and scale via `w`/`h`. This is a framework fact, not a bug in this crate. (`with_flip` works around it for layout moves via gpui's paint-offset mechanism.)
 - **`ElementId` must be stable across frames.** Element state is keyed by id; an unstable id means the state is lost every frame and the animation restarts from scratch. In lists, key by your data (`("row", item.id)`), never by loop index.
 - **At most 8 channels per animated value** (`MAX_CHANNELS`) and **at most 8 keyframes** (`MAX_KEYFRAMES`). Split larger values across multiple `with_motion` wrappers.
 - **`Hsla` is interpolated by converting through `Rgba`** to avoid hue-wheel long-arc artifacts (red → blue passing through green). Alpha is interpolated as-is.
@@ -245,10 +301,11 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 ## Demo
 
 ```sh
-cargo run -p demo
+cargo run -p demo        # main showcase
+cargo run -p flip_demo   # FLIP shuffle grid
 ```
 
-Scenes: spring panel (`(Pixels, Rgba)` tuple), presence toast, `MotionValue` progress bar, keyframe pulse, repeat modes, per-property transitions, hover/press gestures, drag-with-inertia, and a keyed `presence_group` list in both Sync and Wait modes.
+`demo` scenes: spring panel (`(Pixels, Rgba)` tuple), presence toast, `MotionValue` progress bar, keyframe pulse, repeat modes, per-property transitions, hover/press gestures, drag-with-inertia, a keyed `presence_group` list in both Sync and Wait modes, and a variants menu with `BeforeChildren` + staggered items. `flip_demo`: a grid whose items glide when shuffled.
 
 ## Design decisions (for contributors)
 
@@ -256,7 +313,9 @@ Scenes: spring panel (`(Pixels, Rgba)` tuple), presence toast, `MotionValue` pro
 - **The engine only knows `f32` channels** — `Animatable` does the (de)composition; colors go through linear `Rgba` space.
 - **Transitions are caller-supplied per frame** — never persisted, so per-direction parameters are free.
 - **Closed-form springs** — exact solutions per damping branch instead of numeric integration; robust to any frame gap by construction.
+- **Variant scopes are dynamically scoped** — gpui has no third-party-extensible element-tree context, so the scope stack lives in an `App` global, pushed/popped around child delegation in each element phase (the same pattern gpui uses internally for text styles and content masks).
+- **FLIP is translation-only** — `Window::with_element_offset` shifts painting and hit-testing during prepaint without touching layout; there is no equivalent for size, so size changes snap.
 
-## Non-goals for v0.2 (design keeps the door open)
+## Non-goals for v0.3 (design keeps the door open)
 
-Variants/`staggerChildren` orchestration, FLIP layout animation, `popLayout` presence mode, scroll-linked values, and string interpolation. The velocity-preserving engine already supports the interruption semantics these need.
+`popLayout` presence mode, size/FLIP-scale animation, scroll-linked values, and string interpolation. The velocity-preserving engine already supports the interruption semantics these need.
