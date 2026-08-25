@@ -1,4 +1,25 @@
-//! Animation and motion primitives for GPUI applications.
-//!
-//! Version `0.0.1` reserves the crate name. The public API is not implemented
-//! yet and will change without notice.
+pub mod animatable;
+pub mod spring;
+pub mod state;
+pub mod tween;
+
+#[cfg(feature = "gpui")]
+mod element;
+#[cfg(feature = "gpui")]
+mod gpui_impls;
+#[cfg(feature = "gpui")]
+mod presence;
+#[cfg(feature = "gpui")]
+mod value;
+
+pub use animatable::{Animatable, MAX_CHANNELS};
+pub use spring::Spring;
+pub use state::{MotionState, Transition};
+pub use tween::{easing, Easing, Tween};
+
+#[cfg(feature = "gpui")]
+pub use element::{MotionElement, MotionExt};
+#[cfg(feature = "gpui")]
+pub use presence::presence;
+#[cfg(feature = "gpui")]
+pub use value::MotionValue;
