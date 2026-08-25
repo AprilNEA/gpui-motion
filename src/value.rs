@@ -2,7 +2,7 @@ use std::{cell::RefCell, marker::PhantomData, rc::Rc, time::Instant};
 
 use gpui::{App, Window};
 
-use crate::{Animatable, MAX_CHANNELS, MotionState, Transition};
+use crate::{Animatable, ChannelTransitions, MAX_CHANNELS, MotionState, Transition};
 
 pub struct MotionValue<T: Animatable> {
     inner: Rc<RefCell<Inner>>,
@@ -29,8 +29,7 @@ impl<T: Animatable> MotionValue<T> {
     }
 
     pub fn set_target(&self, target: T) {
-        let mut channels = [0.0; MAX_CHANNELS];
-        target.write(&mut channels[..T::CHANNELS]);
+        let channels = channels(&target);
         self.inner
             .borrow_mut()
             .motion
@@ -43,7 +42,9 @@ impl<T: Animatable> MotionValue<T> {
             inner.motion.snap();
         } else {
             let transition = inner.transition;
-            inner.motion.tick(Instant::now(), &transition);
+            inner
+                .motion
+                .tick(Instant::now(), ChannelTransitions::Uniform(&transition));
         }
         if !inner.motion.settled() {
             window.request_animation_frame();
@@ -54,6 +55,40 @@ impl<T: Animatable> MotionValue<T> {
     pub fn settled(&self) -> bool {
         self.inner.borrow().motion.settled()
     }
+
+    pub fn get_velocity(&self) -> T {
+        T::read(self.inner.borrow().motion.velocity())
+    }
+
+    pub fn set_target_with_velocity(&self, target: T, velocity: T) {
+        let target = channels(&target);
+        let velocity = channels(&velocity);
+        let mut inner = self.inner.borrow_mut();
+        inner.motion.retarget_if_needed(&target[..T::CHANNELS]);
+        inner.motion.set_velocity(&velocity[..T::CHANNELS]);
+    }
+
+    pub fn flick(&self, velocity: T) {
+        let velocity = channels(&velocity);
+        self.inner
+            .borrow_mut()
+            .motion
+            .set_velocity(&velocity[..T::CHANNELS]);
+    }
+
+    pub fn jump(&self, value: T) {
+        let value = channels(&value);
+        let mut inner = self.inner.borrow_mut();
+        inner.motion.retarget_if_needed(&value[..T::CHANNELS]);
+        inner.motion.snap();
+    }
+
+    pub fn map<U: Animatable>(&self, f: impl Fn(T) -> U + 'static) -> MappedValue<T, U> {
+        MappedValue {
+            source: self.clone(),
+            transform: Box::new(f),
+        }
+    }
 }
 
 impl<T: Animatable> Clone for MotionValue<T> {
@@ -63,4 +98,21 @@ impl<T: Animatable> Clone for MotionValue<T> {
             value_type: PhantomData,
         }
     }
+}
+
+pub struct MappedValue<T: Animatable, U: Animatable> {
+    source: MotionValue<T>,
+    transform: Box<dyn Fn(T) -> U + 'static>,
+}
+
+impl<T: Animatable, U: Animatable> MappedValue<T, U> {
+    pub fn get(&self, window: &Window, cx: &App) -> U {
+        (self.transform)(self.source.get(window, cx))
+    }
+}
+
+fn channels<T: Animatable>(value: &T) -> [f32; MAX_CHANNELS] {
+    let mut channels = [0.0; MAX_CHANNELS];
+    value.write(&mut channels[..T::CHANNELS]);
+    channels
 }

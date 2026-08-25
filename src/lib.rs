@@ -1,8 +1,12 @@
 pub mod animatable;
+pub mod inertia;
 pub mod spring;
 pub mod state;
+pub mod transition;
 pub mod tween;
 
+#[cfg(feature = "gpui")]
+mod drag;
 #[cfg(feature = "gpui")]
 mod element;
 #[cfg(feature = "gpui")]
@@ -13,13 +17,20 @@ mod presence;
 mod value;
 
 pub use animatable::{Animatable, MAX_CHANNELS};
+pub use inertia::Inertia;
 pub use spring::Spring;
-pub use state::{MotionState, Transition};
+pub use state::MotionState;
+pub use transition::{
+    ChannelTransitions, EasingSeq, KeyframesTiming, Repeat, RepeatCount, RepeatKind, Transition,
+    TransitionKind, MAX_KEYFRAMES,
+};
 pub use tween::{easing, Easing, Tween};
 
 #[cfg(feature = "gpui")]
-pub use element::{MotionElement, MotionExt};
+pub use drag::DragTracker;
 #[cfg(feature = "gpui")]
-pub use presence::presence;
+pub use element::{IntoMotionTarget, IntoTransitions, MotionElement, MotionExt};
+#[cfg(feature = "gpui")]
+pub use presence::{presence, presence_group, PresenceGroup, PresenceMode};
 #[cfg(feature = "gpui")]
 pub use value::MotionValue;
