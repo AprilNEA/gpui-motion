@@ -43,13 +43,7 @@ pub use scope::{Variants, When};
 #[cfg(feature = "gpui")]
 pub use value::MotionValue;
 
-#[cfg(all(feature = "gpui", feature = "gpui-main"))]
+#[cfg(feature = "gpui")]
 pub(crate) fn reduce_motion(cx: &gpui::App) -> bool {
     cx.reduce_motion()
-}
-
-#[cfg(all(feature = "gpui", not(feature = "gpui-main")))]
-pub(crate) fn reduce_motion(_cx: &gpui::App) -> bool {
-    // gpui 0.2.2 cannot expose the system preference, so retain normal animation behavior.
-    false
 }
