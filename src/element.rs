@@ -12,7 +12,7 @@ use gpui::{
 
 use crate::{
     Animatable, ChannelTransitions, Inertia, KeyframesTiming, MAX_CHANNELS, MAX_KEYFRAMES,
-    MotionState, Spring, Transition, Tween, Variants, When,
+    MotionState, Spring, Transition, Tween, Variants, When, reduce_motion,
 };
 
 use crate::scope::{ScopeFrame, SettledRegistry, current_scope, pop_scope, push_scope};
@@ -341,7 +341,7 @@ impl<E: Element, V: Animatable> Element for MotionElement<E, V> {
                         .scope_settled
                         .borrow_mut()
                         .begin_frame(scope_active.as_deref(), when);
-                let reduce_motion = cx.reduce_motion();
+                let reduce_motion = reduce_motion(cx);
                 let gestures = state.gestures.get();
                 let gesture_target = if gestures.pressed {
                     self.while_press.as_ref().or(self.while_hover.as_ref())

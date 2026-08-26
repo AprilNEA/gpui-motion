@@ -2,7 +2,7 @@ use std::{cell::RefCell, marker::PhantomData, rc::Rc, time::Instant};
 
 use gpui::{App, Window};
 
-use crate::{Animatable, ChannelTransitions, MAX_CHANNELS, MotionState, Transition};
+use crate::{Animatable, ChannelTransitions, MAX_CHANNELS, MotionState, Transition, reduce_motion};
 
 pub struct MotionValue<T: Animatable> {
     inner: Rc<RefCell<Inner>>,
@@ -38,7 +38,7 @@ impl<T: Animatable> MotionValue<T> {
 
     pub fn get(&self, window: &Window, cx: &App) -> T {
         let mut inner = self.inner.borrow_mut();
-        if cx.reduce_motion() {
+        if reduce_motion(cx) {
             inner.motion.snap();
         } else {
             let transition = inner.transition;

@@ -8,7 +8,9 @@ use gpui::{
     LayoutId, ParentElement, Pixels, Window, div,
 };
 
-use crate::{Animatable, ChannelTransitions, MAX_CHANNELS, MotionState, Spring, Transition};
+use crate::{
+    Animatable, ChannelTransitions, MAX_CHANNELS, MotionState, Spring, Transition, reduce_motion,
+};
 
 type ChildRender<V> = Box<dyn Fn(V) -> AnyElement + 'static>;
 type ExitCallback = Box<dyn Fn(&ElementId, &mut Window, &mut App) + 'static>;
@@ -251,7 +253,7 @@ impl<V: Animatable> Element for PresenceGroup<V> {
                     if child.phase == Phase::Pending {
                         continue;
                     }
-                    if cx.reduce_motion() {
+                    if reduce_motion(cx) {
                         child.motion.snap();
                     } else {
                         child.motion.tick(

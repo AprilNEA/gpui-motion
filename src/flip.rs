@@ -5,7 +5,7 @@ use gpui::{
     LayoutId, Pixels, Point, Window, point, px,
 };
 
-use crate::{ChannelTransitions, MotionState, Spring, Transition};
+use crate::{ChannelTransitions, MotionState, Spring, Transition, reduce_motion};
 
 /// Adds translation-only FLIP layout animation to an element.
 ///
@@ -105,7 +105,7 @@ impl<E: Element> Element for Flip<E> {
             |state, window| {
                 let mut state = state.unwrap_or_default();
 
-                if !cx.reduce_motion() {
+                if !reduce_motion(cx) {
                     if let Some(previous) = state.origin
                         && previous != bounds.origin
                     {

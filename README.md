@@ -20,6 +20,34 @@ div().with_motion(
 
 Click the toggle as fast as you like — the panel reverses mid-flight with its momentum intact.
 
+## Installation
+
+Use the crates.io releases of both crates by default:
+
+```toml
+[dependencies]
+gpui-motion = "0.1"
+gpui = "0.2.2"
+```
+
+gpui 0.2.2 does not expose the system reduced-motion setting. In this configuration,
+`gpui-motion` treats reduced motion as disabled and runs animations normally.
+
+If your app points gpui at Zed's main branch with a git dependency or
+`[patch.crates-io]`, enable `gpui-main` to use main-only APIs, including automatic
+reduced-motion support:
+
+```toml
+[dependencies]
+gpui-motion = { version = "0.1", features = ["gpui-main"] }
+gpui = { git = "https://github.com/zed-industries/zed" }
+
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed", version = "=0.2.2" }
+```
+
+The git dependency and patch must use the same source so Cargo resolves one gpui version.
+
 ## Why not `with_animation`?
 
 gpui's built-in `with_animation` is **time-driven**: it plays a fixed `0 → 1` curve over a duration. If your state flips while the animation is running, you either restart from scratch (visual jump) or write bookkeeping by hand.
@@ -274,18 +302,20 @@ Store it in your `Entity`; clone it into closures (clones share state).
 | `useTransform` | `MotionValue::map` |
 | `useVelocity` | `MotionValue::get_velocity` |
 | drag + `dragTransition` | `DragTracker` + `MotionValue::flick` |
-| `useReducedMotion` | automatic: `cx.reduce_motion()` ⇒ snap to target |
+| `useReducedMotion` | automatic with `gpui-main`: `cx.reduce_motion()` ⇒ snap to target |
 
 ## Version notes
 
-This crate pins gpui as a **git dependency on Zed's main branch** (the exact commit is resolved by your `Cargo.lock`):
+Published releases depend on crates.io `gpui 0.2.2`. For development, this repository
+patches that dependency to Zed's main branch (the exact commit is resolved by `Cargo.lock`):
 
 ```toml
-gpui = { git = "https://github.com/zed-industries/zed" }
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed", version = "=0.2.2" }
 ```
 
-- Git dependencies only unify if downstream crates use the same source, so your app should depend on gpui the same way (a `[patch.crates-io]` entry works if some of your dependencies use the crates.io `gpui`).
-- The element-layer API surface used here (`Element` trait with `inspector_id`, `Window::with_element_state`, `request_animation_frame`, `insert_hitbox`, `on_mouse_event`) is identical in crates.io `gpui 0.2.2`; the one thing 0.2.2 lacks is `App::reduce_motion` (added to gpui in mid-2026), so building against 0.2.2 requires removing that call.
+- Git dependencies only unify if downstream crates use the same source, so apps using Zed main should enable `gpui-main` and patch crates.io gpui as shown in Installation.
+- The element-layer API surface used here is available in crates.io `gpui 0.2.2`. It lacks `App::reduce_motion`, so the default build cannot read that setting and treats it as `false`; `gpui-main` enables the call when gpui resolves to Zed main.
 - The engine (`--no-default-features`) has **zero dependencies** and compiles and tests without gpui.
 - The demo additionally uses `gpui_platform` (windowing backends) — see `examples/demo`.
 
@@ -296,7 +326,7 @@ gpui = { git = "https://github.com/zed-industries/zed" }
 - **At most 8 channels per animated value** (`MAX_CHANNELS`) and **at most 8 keyframes** (`MAX_KEYFRAMES`). Split larger values across multiple `with_motion` wrappers.
 - **`Hsla` is interpolated by converting through `Rgba`** to avoid hue-wheel long-arc artifacts (red → blue passing through green). Alpha is interpolated as-is.
 - **Repeat applies to tweens/keyframes only.** Springs and inertia are physical simulations; repeating them makes no sense and the flag is ignored.
-- **Reduced motion:** when the OS/user setting is on (`cx.reduce_motion()`), every animation snaps directly to its target. This is an accessibility requirement, not an option.
+- **Reduced motion:** with `gpui-main`, the OS/user setting is honored and every animation snaps directly to its target. Crates.io gpui 0.2.2 cannot expose the setting, so builds without `gpui-main` animate normally.
 
 ## Demo
 
