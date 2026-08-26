@@ -5,9 +5,13 @@ members = ["examples/demo", "examples/flip_demo"]
 name = "gpui-motion"
 version = "0.1.0"
 edition = "2024"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 description = "State-driven spring and tween animations for gpui, with velocity-preserving retargeting"
-repository = "https://github.com/aprilnea/gpui-motion"
+repository = "https://github.com/AprilNEA/gpui-motion"
+authors = ["AprilNEA <dev@aprilnea.me>"]
+readme = "README.md"
+keywords = ["gpui", "animation", "motion"]
+categories = ["gui"]
 
 [dependencies]
 gpui = { git = "https://github.com/zed-industries/zed", optional = true }
